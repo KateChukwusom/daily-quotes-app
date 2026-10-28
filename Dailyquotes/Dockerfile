@@ -10,14 +10,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy project files
 COPY scripts/ ./scripts/
 COPY exec.sh ./
-COPY logs ./logs
 
 # Copy cron schedule and entrypoint
 COPY crontab ./crontab
 COPY docker-entrypoint.sh ./docker-entrypoint.sh
 
 # Make scripts executable
-RUN chmod +x exec.sh docker-entrypoint.sh
+RUN chmod +x exec.sh docker-entrypoint.sh && mkdir -p /app/logs
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
