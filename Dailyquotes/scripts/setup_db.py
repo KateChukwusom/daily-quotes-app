@@ -1,11 +1,17 @@
+#import sqlite3, this database lives in a single file
 import sqlite3
+#import csv
+import csv
 
+#stores the database location in DB_PATH
 DB_PATH = "scripts/storage.db"
 
 connection = sqlite3.connect(DB_PATH)
+
+#Create the cursor to send commands to the database
 cur = connection.cursor()
 
-# USERS
+# create tabke called USERS
 cur.execute("""
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -16,7 +22,7 @@ CREATE TABLE IF NOT EXISTS users (
 )
 """)
 
-# QUOTES
+# create table called QUOTES
 cur.execute("""
 CREATE TABLE IF NOT EXISTS quotes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -36,9 +42,6 @@ CREATE TABLE IF NOT EXISTS email_logs (
     UNIQUE(email, sent_date)
 )
 """)
-
-
-import csv
 
 with open("users.csv", newline="") as f:
     users = [(r["name"], r["email"], r.get("status", "active"), r.get("frequency", "daily"))

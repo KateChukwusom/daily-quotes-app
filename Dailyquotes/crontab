@@ -1,1 +1,0 @@
-0 7 * * * /app/exec.sh >> /app/logs/cron.log 2>&1

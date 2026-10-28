@@ -1,30 +1,31 @@
 FROM python:3.12-slim
 
-# Working directory inside container
-WORKDIR /app
+#set environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
-# Copy requirements file and install dependencies
-COPY requirements.txt ./
+#create folder for the running container
+WORKDIR /quotesapp
+
+#Copy the requirements.txt into the quotesapp
+COPY requirements.txt .
+
+#install the requirements and do not keep the download cache
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy project files
-COPY scripts/ ./scripts/
-COPY exec.sh ./
+#Copy the scripts into the image scripts
+COPY scripts/ ./scripts/ 
 
-# Copy cron schedule and entrypoint
-COPY crontab ./crontab
-COPY docker-entrypoint.sh ./docker-entrypoint.sh
+#Copy the .sh file 
+COPY exec.sh .
 
-# Make scripts executable
-RUN chmod +x exec.sh docker-entrypoint.sh && mkdir -p /app/logs
+#Make the exec.sh executable, create a user and a logs folder
+#Change the ownership of the quotesapp to the user guy so the user can be used to create file and write logs
+RUN chmod +x exec.sh \
+ && useradd --create-home --uid 1000 quotesapp \
+ && mkdir -p logs \
+ && chown -R app:quotesapp /quotesapp
 
-# Set environment variables
-ENV PYTHONUNBUFFERED=1
+USER quotesapp
 
-# Install cron
-RUN apt-get update && \
-    apt-get install -y cron && \
-    rm -rf /var/lib/apt/lists/*
-
-# Start container with cron running
-ENTRYPOINT ["./docker-entrypoint.sh"]
+CMD ["./exec.sh"]
