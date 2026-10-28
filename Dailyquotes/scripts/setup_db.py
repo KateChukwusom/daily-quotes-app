@@ -38,15 +38,16 @@ CREATE TABLE IF NOT EXISTS email_logs (
 """)
 
 
+import csv
+
+with open("users.csv", newline="") as f:
+    users = [(r["name"], r["email"], r.get("status", "active"), r.get("frequency", "daily"))
+             for r in csv.DictReader(f)]
+
 cur.executemany("""
 INSERT OR IGNORE INTO users (name, email, status, frequency)
 VALUES (?, ?, ?, ?)
-""", [
-    ("Chisom", "chisomokeke823@gmail.com", "active", "daily"),
-    ("Kate", "okekekatesom@gmail.com", "inactive", "daily"),
-    ("Raphael", "patraffiah@gmail.com", "active", "daily"),
-    ("Victor", "mrmailerg2i@gmail.com", "active", "daily")
-])
+""", users)
 
 connection.commit()
 connection.close()

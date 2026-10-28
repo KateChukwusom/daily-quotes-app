@@ -1,4 +1,7 @@
 
 .env
-Quotes_compose/.env
-Dailyquotes/.env
+venv/
+logs/
+*.db
+users.csv
+__pycache__/
