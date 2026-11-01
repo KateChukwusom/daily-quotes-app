@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  pull_request:
+    paths:
+      - "daily-quotes-app/**"
+      - "infra/**"
+      - ".github/workflows/**"
+
+permissions:
+  contents: read
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: [dev, prod]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+
+      - name: Check formatting
+        run: terraform fmt -check -recursive
+        working-directory: infra
+
+      - name: Initialise without touching state
+        run: terraform init -backend=false -input=false
+        working-directory: infra/${{ matrix.environment }}
+
+      - name: Validate
+        run: terraform validate
+        working-directory: infra/${{ matrix.environment }}
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./daily-quotes-app
+          platforms: linux/amd64
+          push: false

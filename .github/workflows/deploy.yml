@@ -1,0 +1,26 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "daily-quotes-app/**"
+      - "infra/**"
+      - ".github/workflows/**"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  dev:
+    uses: ./.github/workflows/deploy-env.yml
+    with:
+      environment: dev
+
+  prod:
+    needs: dev
+    uses: ./.github/workflows/deploy-env.yml
+    with:
+      environment: prod
