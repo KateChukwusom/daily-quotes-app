@@ -1,7 +1,5 @@
-
-.env
-venv/
-logs/
-*.db
-users.csv
-__pycache__/
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
