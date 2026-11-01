@@ -3,6 +3,9 @@
 #change directory into quotesapp,if fails, then exit
 cd /quotesapp || exit 1
 
+
+mountpoint -q /data || { echo "$(date -u) | /data is not a mounted volume"; exit 1; }
+
 #create a variable called status=0, 0 means success 
 status=0
 

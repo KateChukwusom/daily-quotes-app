@@ -3,11 +3,12 @@
 import requests
 import sqlite3
 import datetime
-import time
 import logging
+import os
+import sys
 
 """Set up logging to both file and console"""
-
+os.makedirs("logs", exist_ok=True)
 logging.basicConfig(
     filename="logs/quotefetcher.log",
     level=logging.INFO,
@@ -26,11 +27,12 @@ logger.info("Starting the run, On your marks...")
 
 """Connect to SQLite Database, a file database called storage.db has already been set up"""
 
-connection = sqlite3.connect("scripts/storage.db")
+DB_PATH = os.environ.get("DB_PATH", "scripts/storage.db")
+connection = sqlite3.connect(DB_PATH)
 cur = connection.cursor()
 logger.info("Successfully connected to Sqlite database")
 
-"""Fetch a single quote from the API, which makes downstream logic clean and neat"""
+"""Fetch a single quote from the API"""
 def get_quote():
     try:
         logger.info("Fetching Quote from API")
@@ -58,34 +60,36 @@ def get_quote():
             logger.warning("Received nothing from API")
         return None,None
     except Exception as e:
-        logger.error("Error fetching Quote from API")
+        logger.error(f"Error fetching Quote from API: {e}")
         return None, None
 
 
 """Check if we already have a quote for today"""
 
-today = datetime.date.today().isoformat()
+today = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
 cur.execute("SELECT COUNT(*) FROM quotes WHERE date_fetched = ?", (today,))
 quote_exists= cur.fetchone()[0]
 
+fetch_failed = False
 if quote_exists:
     logger.info("Quote already exists for Today, skipping fetch")
     print("Quote exists in database")
 else:
     quote, author = get_quote()
     if quote and author:
-        cur.execute( "INSERT INTO quotes (quote, author, date_fetched) VALUES (?, ?, ?)",
-                     (quote, author, today)
-                         )
+        cur.execute("INSERT INTO quotes (quote, author, date_fetched) VALUES (?, ?, ?)",
+                    (quote, author, today))
         connection.commit()
         logger.info("Stored today's quotes Successfully")
     else:
         logger.error("Failed to insert new quote in the database")
-
+        fetch_failed = True
 connection.close()
 logger.info("Database connection closed")
 
 logger.info("Quote fetcher process complete")
+if fetch_failed:
+    sys.exit(1)
 
 
 

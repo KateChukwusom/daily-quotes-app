@@ -14,7 +14,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 #Copy the scripts into the image scripts
-COPY scripts/ ./scripts/ 
+COPY scripts/ ./scripts/
+
+
 
 #Copy the .sh file 
 COPY exec.sh .
@@ -24,7 +26,7 @@ COPY exec.sh .
 RUN chmod +x exec.sh \
  && useradd --create-home --uid 1000 quotesapp \
  && mkdir -p logs \
- && chown -R app:quotesapp /quotesapp
+ && chown -R quotesapp:quotesapp /quotesapp
 
 USER quotesapp
 
