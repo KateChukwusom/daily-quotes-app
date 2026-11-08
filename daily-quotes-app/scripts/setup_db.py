@@ -1,4 +1,4 @@
-#import sqlite3, this database lives in a single file
+
 import sqlite3
 import csv
 import os
