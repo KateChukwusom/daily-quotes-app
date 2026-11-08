@@ -1,15 +1,5 @@
 # Every value the composition needs is declared here and given a value in terraform.tfvars.
-# The modules validate most of these themselves, so the checks here are kept light.
-variable "cob_iam_assume_role" {
-  type = map(object({
-    trusted_principal_type = string
-    trusted_identifiers    = list(string)
-  }))
-}
 
-variable "cob_iam_role_policy_statements" {
-  type = any
-}
 
 variable "region" {
   type        = string
