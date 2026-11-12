@@ -114,6 +114,9 @@ jobs:
       - name: Run the task once and check it
         working-directory: .
         run: |
+          echo "Waiting 60s for EFS mount targets to become ready..."
+          sleep 60
+
           NET=$(aws scheduler get-schedule --name "$REPO" \
             --query "Target.EcsParameters.NetworkConfiguration.awsvpcConfiguration" --output json)
           SUBNET=$(echo "$NET" | jq -r '.Subnets[0]')
