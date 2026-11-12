@@ -105,7 +105,7 @@ module "IAM" {
 
 # NETWORK
 module "Networking" {
-  source = "git::https://github.com/KateChukwusom/cob-terraform-aws-networking.git?ref=v1.0.0"
+  source         = "git::https://github.com/KateChukwusom/cob-terraform-aws-networking.git?ref=v1.0.0"
   team           = var.team
   environment    = var.environment
   vpc_cidr       = var.vpc_cidr
@@ -174,7 +174,7 @@ module "ECS" {
 
 # CLOCK
 module "Scheduler" {
-  source = "git::https://github.com/KateChukwusom/cob-terraform-aws-scheduler.git?ref=v1.0.0"
+  source             = "git::https://github.com/KateChukwusom/cob-terraform-aws-scheduler.git?ref=v1.0.0"
   team               = var.team
   environment        = var.environment
   scheduler_role_arn = module.IAM.role_arns[local.sched_role_name]
