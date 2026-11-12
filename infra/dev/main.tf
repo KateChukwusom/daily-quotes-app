@@ -22,9 +22,9 @@ locals {
   region     = data.aws_region.current.region
 
   # Role names (the IAM module uses the map key as the role name)
-  exec_role_name  = "${local.name}-exec-v2"
-  task_role_name  = "${local.name}-task-v2"
-  sched_role_name = "${local.name}-sched-v2"
+  exec_role_name  = "${local.name}-exec"
+  task_role_name  = "${local.name}-task"
+  sched_role_name = "${local.name}-sched"
 
   # ARNs built from names, so the IAM module does not depend on ECS
   cluster_arn         = "arn:aws:ecs:${local.region}:${local.account_id}:cluster/${local.name}-cluster"

@@ -37,8 +37,8 @@ app_secrets = {
   EMAIL_PASSWORD = "arn:aws:secretsmanager:us-east-1:905418429000:secret:quotes/emailpassword-qhvqUi"
 }
 
-# Schedule (change this line for other timings)
-schedule_expression = "cron(0 7 * * ? *)"
+# Schedule 
+schedule_expression = "cron(0 0,7,14,21 * * ? *)"
 schedule_timezone   = "Africa/Lagos"
 
 container_insights = true

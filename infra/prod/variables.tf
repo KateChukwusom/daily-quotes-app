@@ -1,5 +1,5 @@
 # Every value the composition needs is declared here and given a value in terraform.tfvars.
-# The modules validate most of these themselves, so the checks here are kept light.
+
 
 variable "region" {
   type        = string
