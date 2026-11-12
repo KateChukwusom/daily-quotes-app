@@ -1,0 +1,137 @@
+name: Pipeline
+
+on:
+  pull_request:
+    paths:
+      - "daily-quotes-app/**"
+      - "infra/**"
+      - ".github/workflows/pipeline.yml"
+  push:
+    branches: [main]
+    paths:
+      - "daily-quotes-app/**"
+      - "infra/**"
+      - ".github/workflows/pipeline.yml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  TF_VERSION: 1.10.5
+
+jobs:
+  # CI: runs on pull requests only. Checks, no AWS login, nothing deployed.
+  check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Check formatting
+        working-directory: infra
+        run: terraform fmt -check -recursive
+
+      - name: Validate dev and prod
+        run: |
+          for env in dev prod; do
+            (cd infra/$env && terraform init -backend=false -input=false && terraform validate)
+          done
+
+      - name: Check the Docker image builds
+        run: docker build --platform linux/amd64 -t test ./daily-quotes-app
+
+  # CD: runs after a merge to main 
+  # The matrix runs dev first, then prod. Prod waits for the approver.
+  deploy:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    strategy:
+      max-parallel: 1          # one at a time: dev, then prod
+      matrix:
+        env: [dev, prod]
+    environment: ${{ matrix.env }}   # prod pauses here until approved
+    concurrency:
+      group: deploy-${{ matrix.env }}
+      cancel-in-progress: false
+    env:
+      REPO: quotemail-${{ matrix.env }}-quotes
+      CLUSTER: quotemail-${{ matrix.env }}-cluster
+    defaults:
+      run:
+        working-directory: infra/${{ matrix.env }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Log in to AWS
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Set the image tag
+        run: echo "IMAGE_TAG=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
+      - name: Terraform init
+        run: terraform init -input=false
+
+      - name: Create the ECR repository first
+        run: terraform apply -input=false -auto-approve -target=module.ECR -var "image_tag=$IMAGE_TAG"
+
+      - name: Log in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+     
+      - name: Build and push the image
+        working-directory: .
+        run: |
+          if aws ecr describe-images --repository-name "$REPO" --image-ids imageTag="$IMAGE_TAG" >/dev/null 2>&1; then
+            echo "Image already in ECR, skipping push"
+          else
+            IMAGE=${{ steps.ecr.outputs.registry }}/$REPO:$IMAGE_TAG
+            docker build --platform linux/amd64 -t "$IMAGE" ./daily-quotes-app
+            docker push "$IMAGE"
+          fi
+
+      - name: Terraform plan
+        run: terraform plan -input=false -var "image_tag=$IMAGE_TAG"
+
+      - name: Terraform apply
+        run: terraform apply -input=false -auto-approve -var "image_tag=$IMAGE_TAG"
+
+      # Send emails right after deploying: start one task and check it succeeded
+      - name: Run the task once and check it
+        working-directory: .
+        run: |
+          NET=$(aws scheduler get-schedule --name "$REPO" \
+            --query "Target.EcsParameters.NetworkConfiguration.awsvpcConfiguration" --output json)
+          SUBNET=$(echo "$NET" | jq -r '.Subnets[0]')
+          SG=$(echo "$NET" | jq -r '.SecurityGroups[0]')
+
+          TASK=$(aws ecs run-task --cluster "$CLUSTER" --task-definition "$REPO" \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNET],securityGroups=[$SG],assignPublicIp=ENABLED}" \
+            --query "tasks[0].taskArn" --output text)
+          echo "Started $TASK"
+
+          aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$TASK"
+
+          CODE=$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$TASK" \
+            --query "tasks[0].containers[0].exitCode" --output text)
+          echo "Exit code: $CODE"
+
+          if [ "$CODE" != "0" ]; then
+            aws logs tail "/ecs/$REPO" --since 10m || true
+            exit 1
+          fi

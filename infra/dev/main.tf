@@ -22,9 +22,9 @@ locals {
   region     = data.aws_region.current.region
 
   # Role names (the IAM module uses the map key as the role name)
-  exec_role_name  = "${local.name}-exec-v2"
-  task_role_name  = "${local.name}-task-v2"
-  sched_role_name = "${local.name}-sched-v2"
+  exec_role_name  = "${local.name}-exec"
+  task_role_name  = "${local.name}-task"
+  sched_role_name = "${local.name}-sched"
 
   # ARNs built from names, so the IAM module does not depend on ECS
   cluster_arn         = "arn:aws:ecs:${local.region}:${local.account_id}:cluster/${local.name}-cluster"
@@ -36,7 +36,7 @@ locals {
 # IAM
 # All three roles live here: execution, task and scheduler
 module "IAM" {
-  source = "git::https://github.com/KateChukwusom/AWSTerraform_Modules.git//modules/IAM?ref=main"
+  source = "git::https://github.com/KateChukwusom/cob-terraform-aws-iam.git?ref=v1.0.0"
 
   team        = var.team
   environment = var.environment
@@ -105,8 +105,7 @@ module "IAM" {
 
 # NETWORK
 module "Networking" {
-  source = "git::https://github.com/KateChukwusom/AWSTerraform_Modules.git//modules/networking?ref=main"
-
+  source         = "git::https://github.com/KateChukwusom/cob-terraform-aws-networking.git?ref=v1.0.0"
   team           = var.team
   environment    = var.environment
   vpc_cidr       = var.vpc_cidr
@@ -115,7 +114,7 @@ module "Networking" {
 
 # IMAGE REPOSITORY
 module "ECR" {
-  source = "git::https://github.com/KateChukwusom/AWSTerraform_Modules.git//modules/ECR?ref=main"
+  source = "git::https://github.com/KateChukwusom/cob-terraform-aws-ecr.git?ref=v1.0.0"
 
   team             = var.team
   environment      = var.environment
@@ -124,7 +123,7 @@ module "ECR" {
 
 # STORAGE
 module "EFS" {
-  source = "git::https://github.com/KateChukwusom/AWSTerraform_Modules.git//modules/EFS?ref=main"
+  source = "git::https://github.com/KateChukwusom/cob-terraform-aws-efs.git?ref=v1.0.0"
 
   team                       = var.team
   environment                = var.environment
@@ -159,7 +158,7 @@ locals {
 
 # CONTAINER PLATFORM
 module "ECS" {
-  source = "git::https://github.com/KateChukwusom/AWSTerraform_Modules.git//modules/ECS?ref=main"
+  source = "git::https://github.com/KateChukwusom/cob-terraform-aws-ecs.git?ref=v1.0.0"
 
   team               = var.team
   environment        = var.environment
@@ -175,8 +174,7 @@ module "ECS" {
 
 # CLOCK
 module "Scheduler" {
-  source = "git::https://github.com/KateChukwusom/AWSTerraform_Modules.git//modules/scheduler?ref=main"
-
+  source             = "git::https://github.com/KateChukwusom/cob-terraform-aws-scheduler.git?ref=v1.0.0"
   team               = var.team
   environment        = var.environment
   scheduler_role_arn = module.IAM.role_arns[local.sched_role_name]

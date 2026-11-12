@@ -1,9 +1,7 @@
 region      = "us-east-1"
-team        = "quotes"
+team        = "quotemail"
 environment = "prod"
 
-# Public subnets only, so there is no NAT gateway and no fixed monthly NAT cost.
-# The task has no inbound rules, so nothing on the internet can reach it.
 vpc_cidr = "10.0.0.0/16"
 
 public_subnets = {
@@ -11,13 +9,11 @@ public_subnets = {
 }
 
 # ECR
-# One repository
 ecr_repositories = {
   quotes = {}
 }
 
 # EFS
-# One folder on the drive, mounted in the container at /data
 efs_access_points = {
   data = {
     path        = "/sqlite-data"
@@ -27,24 +23,22 @@ efs_access_points = {
   }
 }
 
-# App 
-# Tags are immutable in ECR, so every new image needs a new tag. In CI use the commit SHA.
+# App
+# Tags are immutable in ECR, so every new image needs a new tag.
 image_tag = "v1"
 
-# Plain settings your script reads. Add whatever it expects, never passwords.
 app_environment = {
-  EMAIL_ADDRESS = "katechisom072@gmail.com"
-  EMAIL_SENDER  = "katechisom072@gmail.com"
-  DB_PATH       = "/data/storage.db"
+  EMAIL_ADDRESS       = "katechisom072@gmail.com"
+  ADMIN_EMAIL_ADDRESS = "katechisom072@gmail.com"
+  DB_PATH             = "/data/storage.db"
 }
 
-
-app_secrets = { EMAIL_PASSWORD = "arn:aws:secretsmanager:us-east-1:905418429000:secret:quotes/emailpassword-qhvqUi" }
-
+app_secrets = {
+  EMAIL_PASSWORD = "arn:aws:secretsmanager:us-east-1:905418429000:secret:quotes/emailpassword-qhvqUi"
+}
 
 # Schedule 
-# Every day at 07:00 Lagos time. Use rate(5 minutes) while testing.
-schedule_expression = "cron(0 7 * * ? *)"
+schedule_expression = "cron(0 0,7,14,21 * * ? *)"
 schedule_timezone   = "Africa/Lagos"
 
 container_insights = true
