@@ -339,3 +339,5 @@ terraform init
 terraform plan
 terraform apply
 ```
+
+This project is open to contribution.
