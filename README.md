@@ -138,30 +138,23 @@ The report includes the number of users emailed, successes and failures, the quo
 ## 5. Repository Structure
 
 ```
+
 .
-├── daily-quotes-app/            # The application
+├── .github/workflows/pipeline.yml   
+├── daily-quotes-app/                
 │   ├── Dockerfile
-│   ├── exec.sh                  # Runs the pipeline once, then exits
+│   ├── exec.sh                      
 │   ├── requirements.txt
-│   ├── scripts/                 # Fetcher, sender, admin summary
-│   └── .dockerignore
-├── infra/                       # Terraform, one folder per environment
-│   ├── dev/
-│   │   ├── main.tf
-│   │   ├── variables.tf
-│   │   ├── outputs.tf
-│   │   └── terraform.tfvars
-│   └── prod/
-│       ├── main.tf
-│       ├── variables.tf
-│       ├── outputs.tf
-│       └── terraform.tfvars
-├── .github/
-│   └── workflows/
-│       ├── ci.yml               # Checks on pull requests
-│       ├── deploy.yml           # Triggers dev then prod
-│       └── deploy-env.yml       # Reusable steps for one environment
-├── .gitignore
+│   └── scripts/
+│       ├── setup_db.py
+│       ├── quotefetcher.py
+│       ├── emailsender.py
+│       ├── adminsummary.py
+│       └── users.csv                
+├── infra/
+│   ├── dev/                        
+│   └── prod/                      
+├── image/architecture.png
 └── README.md
 ```
 
@@ -182,12 +175,12 @@ The app reads these environment variables. In the cloud, Terraform sets them. Lo
 
 ```
 EMAIL_ADDRESS=you@example.com
-EMAIL_SENDER=you@example.com
+ADMIN_EMAIL_ADDRESS=you@example.com
 EMAIL_PASSWORD=your-app-password
 DB_PATH=./data/storage.db
 ```
 
-> **Gmail:** use an [app password](https://support.google.com/accounts/answer/185833), not your normal account password. It requires two-step verification on the account.
+**Gmail:** use an [app password](https://support.google.com/accounts/answer/185833), not your normal account password. It requires two-step verification on the account.
 
 ---
 
@@ -267,15 +260,18 @@ Resources are named `<team>-<environment>-<name>`, for example:
 
 ### Modules
 
-Reusable modules live in a separate repository, [AWSTerraform_Modules](https://github.com/KateChukwusom/AWSTerraform_Modules), and are pulled in by Git URL, pinned to a version tag (for example `?ref=v1.0.0`).
+Each Terraform module lives in its own repository and is pulled at a pinned tag:
 
-| Module | Creates |
+| Module | Repository |
 | --- | --- |
-| `Networking` | VPC, subnets, internet gateway, route tables, optional NAT gateways |
-| `ECR` | Image repositories and lifecycle policies |
-| `EFS` | File system, mount targets, access points, security group, encryption policy |
-| `ECS` | Cluster, log groups, IAM roles, security groups, task definitions |
-| `Scheduler` | The schedule and the role it uses to start tasks |
+| IAM | `github.com/KateChukwusom/cob-terraform-aws-iam` |
+| Networking | `github.com/KateChukwusom/cob-terraform-aws-networking` |
+| ECR | `github.com/KateChukwusom/cob-terraform-aws-ecr` |
+| EFS | `github.com/KateChukwusom/cob-terraform-aws-efs` |
+| ECS | `github.com/KateChukwusom/cob-terraform-aws-ecs` |
+| Scheduler | `github.com/KateChukwusom/cob-terraform-aws-scheduler` |
+
+The tag for each is set in the `source = "...?ref=<tag>"` line of `infra/<env>/main.tf`. The module repos must be **public**, or `terraform init` on the GitHub runner cannot download them.
 
 ### Environments
 
@@ -301,23 +297,117 @@ Because they are separate, a new module version can be tried in dev (`ref=v1.0.1
 
 ## 11. First-Time Setup
 
-Do these once, by hand, before the first deployment.
+## Prerequisites
+
+| Tool / account | Notes |
+| --- | --- |
+| AWS account | You need permission to create IAM, S3, ECS, EFS, VPC and related resources |
+| GitHub account and repo | Public repo recommended (environment approval rules work on the free plan) |
+| Terraform `>= 1.10` | Needed for S3 native state locking (`use_lockfile`) |
+| AWS CLI v2 | Logged in to your account (`aws sts get-caller-identity` works) |
+| Docker | Only for local testing |
+| Gmail account with 2-step verification | To create an app password |
+| A second GitHub user | Optional, to approve pull requests and prod deployments |
+
+Throughout this guide, replace:
+
+| Placeholder | Meaning |
+| --- | --- |
+| `<ACCOUNT_ID>` | Your 12-digit AWS account ID |
+| `<GITHUB_USER>/<REPO>` | Your GitHub owner and repository name |
+| `<STATE_BUCKET>` | Your state bucket name, for example `quotemail-tfstate-<ACCOUNT_ID>` |
+| `<DEPLOY_ROLE>` | Name of the role GitHub assumes, for example `quotemail-github-deploy` |
 
 ### 11.1 Terraform state bucket
 
 Create a private, versioned, encrypted S3 bucket to store Terraform state. State files are separated per environment by key (`dev/terraform.tfstate`, `prod/terraform.tfstate`). The bucket must exist before `terraform init`.
 
+Set the backend in `infra/dev/backend.tf` (backend blocks cannot use variables):
+
+```hcl
+terraform {
+  backend "s3" {
+    bucket       = "<STATE_BUCKET>"
+    key          = "quotemail/dev/terraform.tfstate"
+    region       = "us-east-1"
+    encrypt      = true
+    use_lockfile = true
+  }
+}
+```
+
+`infra/prod/backend.tf` is identical except `key = "quotemail/prod/terraform.tfstate"`.
+
 ### 11.2 Secrets Manager
 
+1. In your Google account, create an app password (myaccount.google.com/apppasswords). Remove the spaces so it is 16 characters.
+2. Store it as a plain string, not JSON.
 For each environment, create a secret holding the email password
 
 ### 11.3 GitHub OIDC in AWS
 
-The pipeline logs in to AWS without stored access keys.
+**3a. Add the identity provider** (once per AWS account). In the AWS console go to IAM, Identity providers, Add provider:
 
-1. In IAM, add GitHub as an OpenID Connect identity provider (`token.actions.githubusercontent.com`).
-2. Create one role per environment whose trust policy allows only this repository and that environment (the subject looks like `repo:<owner>/<repo>:environment:dev`).
-3. Give each role permission to manage the resources in section 9 and to read and write the state bucket.
+- Provider type: OpenID Connect
+- Provider URL: `https://token.actions.githubusercontent.com`
+- Audience: `sts.amazonaws.com`
+
+If `token.actions.githubusercontent.com` is already listed, skip this.
+
+**3b. Create the role** named `<DEPLOY_ROLE>` with this trust policy. The `sub` values restrict login to your repo's `dev` and `prod` environments only:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Principal": {
+      "Federated": "arn:aws:iam::<ACCOUNT_ID>:oidc-provider/token.actions.githubusercontent.com"
+    },
+    "Action": "sts:AssumeRoleWithWebIdentity",
+    "Condition": {
+      "StringEquals": {
+        "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+        "token.actions.githubusercontent.com:sub": [
+          "repo:<GITHUB_USER>/<REPO>:environment:dev",
+          "repo:<GITHUB_USER>/<REPO>:environment:prod"
+        ]
+      }
+    }
+  }]
+}
+```
+
+The `environment:` form is required because the deploy job declares `environment: dev|prod`. A `ref:refs/heads/main` subject will not match.
+
+**3c. Attach permissions** to the role:
+
+1. The AWS managed policy `PowerUserAccess` (covers everything except IAM).
+2. An inline policy that allows IAM only for this project's resource names:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "iam:*",
+      "Resource": [
+        "arn:aws:iam::<ACCOUNT_ID>:role/quotemail-*",
+        "arn:aws:iam::<ACCOUNT_ID>:policy/quotemail-*",
+        "arn:aws:iam::<ACCOUNT_ID>:instance-profile/quotemail-*"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["iam:ListPolicies", "iam:ListRoles"],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+The scope must match your `team` name. If you change `team`, change the `quotemail-*` prefix here too. PowerUserAccess is broad; for real production use, narrow it to the services this project uses.
 
 ### 11.4 GitHub environments
 
@@ -328,7 +418,115 @@ In the repository settings, create two environments, `dev` and `prod`:
 
 ---
 
+### 4. Configure GitHub
+
+In your repo's Settings:
+
+1. **Secrets and variables, Actions, Variables:** add `AWS_ROLE_ARN` = `arn:aws:iam::<ACCOUNT_ID>:role/<DEPLOY_ROLE>` (a variable, not a secret; the ARN is an identifier, not a credential).
+2. **Environments:** create `dev` (no protection) and `prod`. On `prod`:
+   - tick **Required reviewers** and add your approver, then click **Save protection rules**
+   - tick **Prevent self-review**
+   - under **Deployment branches and tags**, choose Selected branches and add `main`
+3. **Collaborators:** add your reviewer(s). Reviewers need Write access and must accept the invite.
+4. **Rules, Rulesets, New branch ruleset:** target the default branch, enable **Require a pull request before merging** (1 approval) and **Block force pushes**. Add `Pipeline / check` as a required status check after CI has run once.
+
 ## 12. Deploying
+
+### Configure Terraform
+
+Edit `infra/dev/terraform.tfvars` (and `infra/prod/terraform.tfvars`, with `environment = "prod"`)
+
+## 8. First deploy
+
+1. Create a branch, commit, push, and open a pull request (see [Day-to-day workflow](#day-to-day-workflow)).
+2. Wait for the `check` job to go green and have your reviewer approve.
+3. Merge. The pipeline deploys **dev**, then waits for approval, then deploys **prod**.
+
+The first run creates everything from scratch, so it takes several minutes (the EFS mount target alone can take 1 to 3 minutes).
+
+## How the pipeline works
+
+One file, `.github/workflows/pipeline.yml`, with two jobs:
+
+| Job | Runs on | What it does |
+|---|---|---|
+| `check` (CI) | Pull requests | `terraform fmt -check`, `terraform init -backend=false` and `validate` for dev and prod, Docker build (no push). No AWS login. |
+| `deploy` (CD) | Merge to `main`, or manual run | For dev, then prod: log in to AWS via OIDC, create the ECR repo, build and push the image tagged with the short commit ID, `terraform plan`, `terraform apply`, then run the task once and fail if its exit code is not 0 |
+
+Key design points:
+
+- **No stored AWS keys.** GitHub requests a short-lived token; AWS checks it against the role's trust policy.
+- **Immutable image tags.** Every image is tagged with the commit ID, and the push is skipped if that tag already exists.
+- **README-only changes do not trigger anything.** The workflow only runs for changes under `daily-quotes-app/`, `infra/` or the workflow file itself.
+- **One deploy at a time per environment**, using `concurrency` with `cancel-in-progress: false`, so a running `terraform apply` is never killed halfway.
+- **Two approval gates.** A reviewer must approve the pull request before merge, and the `prod` environment requires a reviewer to approve the deployment.
+- **Actions are pinned to major versions.** Check each action's releases page periodically, or enable Dependabot with `.github/dependabot.yml`:
+
+```yaml
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+```
+
+## Day-to-day workflow
+
+`main` is protected. Every change goes through a branch and a pull request.
+
+```bash
+cd <repo>
+git checkout main
+git pull
+git checkout -b my-change
+
+# ...edit files...
+terraform fmt -recursive        # run inside infra/ if you changed Terraform
+
+git add -A
+git commit -m "Describe the change"
+git push -u origin my-change
+```
+
+Then:
+
+1. Open a pull request on GitHub.
+2. Wait for `Pipeline / check` to pass.
+3. A reviewer approves.
+4. Merge. Dev deploys automatically; approve the prod deployment under **Actions, the run, Review deployments**.
+
+Changing only the app (`daily-quotes-app/`) rebuilds the image and redeploys with the new tag. Changing infrastructure runs `terraform apply`.
+
+## Configuration reference
+
+| Environment variable | Where set | Used by |
+| --- | --- | --- |
+| `EMAIL_ADDRESS` | `app_environment` | Sender address and SMTP login |
+| `EMAIL_PASSWORD` | `app_secrets` (Secrets Manager) | SMTP password |
+| `ADMIN_EMAIL_ADDRESS` | `app_environment` | Recipient of the admin summary |
+| `DB_PATH` | `app_environment` | SQLite file location (`/data/storage.db` on EFS) |
+| `SMTP_SERVER`, `SMTP_PORT` | Optional | Default `smtp.gmail.com`, `465` |
+
+### Troubleshooting
+
+| Symptom | Cause and fix |
+| --- | --- |
+| `terraform fmt -check` fails in CI (exit code 3) | Run `terraform fmt -recursive` in `infra/` and commit |~
+| OIDC login refused | The trust policy `sub` does not match `repo:<user>/<repo>:environment:<env>` |
+| `already exists` on apply | A leftover resource from an earlier stack is not in the current state. Delete it, then re-run the failed job |
+| `Connection unexpectedly closed` from the email scripts | The secret is stored as JSON, or the password is wrong. Re-save it as a plain 16-character app password |
+| `Missing email configuration` | A required environment variable is missing (for example `ADMIN_EMAIL_ADDRESS`) |
+| `/data is not a mounted volume` | The EFS volume is not attached to the task, or you ran the container locally without `-v` |
+| Task exit code `None`, `Failed to resolve ...efs...` | The EFS mount target was not ready yet. Re-run the task; consider a short wait before the run-task step |
+| `CannotPullContainerError ... not found` | The image tag is not in ECR yet |
+| Run `terraform` locally gives `no such host` (WSL) | WSL DNS is broken. Set `nameserver 8.8.8.8` in `/etc/resolv.conf` |
+| `Failed to install provider ... symlink` | Remove the cached provider folder under `~/.terraform.d/plugin-cache` and re-run `init` |
+| Prod deployed without approval | The `prod` environment has no saved required reviewers, or admin bypass is on |
+
+Useful commands:
+
+```bash
 
 ### Manually from your computer
 
