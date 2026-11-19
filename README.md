@@ -55,7 +55,7 @@ Build a daily motivational quote email system that automates the whole pipeline,
 ---
 
 ## 2. Architecture
-![Quote App Architecture](./images/quote-app-architecture.jpg)
+![quote_mailer_architecture.png](./images/quote_mailer_architecture.png)
 
 ### Daily flow
 
