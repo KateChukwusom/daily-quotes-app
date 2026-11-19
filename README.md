@@ -1,6 +1,17 @@
-# MindFuel: Daily Quote Delivery System
+# MindFuel: Daily Quotes Mailer
 
-MindFuel fetches an inspiring quote from the [ZenQuotes API](https://zenquotes.io/) every morning and emails it to subscribers at **7:00 AM**. It runs as a scheduled container on AWS Fargate. The infrastructure is defined in Terraform using reusable modules, and deployments run through GitHub Actions.
+Daily Quotes Mailer is a serverless application that delivers an inspirational quote by email to a list of subscribers on a defined schedule, and sends the administrator a delivery summary after each run. It is deployed on Amazon Web Services (AWS) using Terraform and GitHub Actions.
+
+The application runs as a short-lived container that starts on schedule, completes its work, and terminates. No compute resources are provisioned between runs, which keeps operating cost low and removes the need to manage or patch servers. The infrastructure is defined entirely as code, so the system can be reproduced from this repository.
+
+## Key features
+
+- **Serverless execution.** AWS Fargate runs the container only when the schedule triggers it. The design uses no NAT gateway, load balancer, or always-on server.
+- **Infrastructure as code.** The network, storage, permissions, and scheduling are provisioned with Terraform, using six reusable modules maintained in separate repositories and pinned to version tags.
+- **Automated delivery pipeline.** A single GitHub Actions workflow validates every pull request, then builds, deploys, and test-runs the application after merge, first to the development environment and then to production.
+- **Credential-free authentication.** GitHub authenticates to AWS through OpenID Connect (OIDC) using short-lived tokens, so no long-lived access keys are stored.
+- **Controlled releases.** Changes reach the main branch only through reviewed pull requests, and production deployments require a separate approval.
+- **Idempotent delivery.** The subscriber database is stored on Amazon EFS, and the scripts skip any recipient who has already been emailed that day, so repeated runs do not produce duplicate messages.
 
 ## Table of Contents
 
@@ -16,13 +27,6 @@ MindFuel fetches an inspiring quote from the [ZenQuotes API](https://zenquotes.i
 10. [Terraform Layout](#10-terraform-layout)
 11. [First-Time Setup](#11-first-time-setup)
 12. [Deploying](#12-deploying)
-13. [CI/CD Pipeline](#13-cicd-pipeline)
-14. [Operations Guide](#14-operations-guide)
-15. [Troubleshooting](#15-troubleshooting)
-16. [Security](#16-security)
-17. [Cost](#17-cost)
-18. [Design Decisions and Trade-offs](#18-design-decisions-and-trade-offs)
-19. [Possible Improvements](#19-possible-improvements)
 
 ---
 
@@ -138,27 +142,32 @@ The report includes the number of users emailed, successes and failures, the quo
 ## 5. Repository Structure
 
 ```
-
-.
-├── .github/workflows/pipeline.yml   
-├── daily-quotes-app/                
+Dailyquotes/
+├── .github/
+│   └── workflows/
+│       └── pipeline.yml        
+├── daily-quotes-app/           
 │   ├── Dockerfile
-│   ├── exec.sh                      
+│   ├── exec.sh                 
 │   ├── requirements.txt
 │   └── scripts/
-│       ├── setup_db.py
-│       ├── quotefetcher.py
-│       ├── emailsender.py
-│       ├── adminsummary.py
-│       └── users.csv                
-├── infra/
-│   ├── dev/                        
-│   └── prod/                      
-├── image/architecture.png
+│       ├── setup_db.py         
+│       ├── quotefetcher.py     
+│       ├── emailsender.py      
+│       ├── adminsummary.py     
+│       └── users.csv           
+├── infra/                      
+│   ├── dev/                    
+│   │   ├── backend.tf
+│   │   ├── main.tf
+│   │   ├── outputs.tf
+│   │   ├── terraform.tfvars
+│   │   └── variables.tf
+│   └── prod/                   
+├── image/
+│   └── architecture.png        
 └── README.md
 ```
-
----
 
 ## 6. Configuration
 
@@ -167,8 +176,8 @@ The app reads these environment variables. In the cloud, Terraform sets them. Lo
 | Variable | Purpose | Source in the cloud |
 | --- | --- | --- |
 | `EMAIL_ADDRESS` | SMTP login | Plain environment variable |
-| `EMAIL_SENDER` | The "from" address | Plain environment variable |
-| `EMAIL_PASSWORD` | SMTP password or app password | **Secrets Manager** (injected at start) |
+| `ADMIN_EMAIL_ADDRESS` | The "admin" address | Plain environment variable |
+| `EMAIL_PASSWORD` | SMTP password or app password | Secrets Manager (injected at start) |
 | `DB_PATH` | Location of the SQLite file | Plain environment variable (`/data/storage.db`) |
 
 ### Example `.env` for local use
@@ -180,7 +189,7 @@ EMAIL_PASSWORD=your-app-password
 DB_PATH=./data/storage.db
 ```
 
-**Gmail:** use an [app password](https://support.google.com/accounts/answer/185833), not your normal account password. It requires two-step verification on the account.
+**Gmail:** use an app password, not your normal account password. It requires two-step verification on the account.
 
 ---
 
@@ -240,7 +249,7 @@ The volume mount keeps the database on your machine, which mimics how EFS works 
 
 ### Networking
 
-The task runs in a public subnet with a public IP, so it can reach ECR, CloudWatch, Secrets Manager and the mail server without a NAT gateway. Its security group allows **no inbound traffic**; outbound is open. EFS accepts NFS (port 2049) only from the task's security group.
+The task runs in a public subnet with a public IP, so it can reach ECR, CloudWatch, Secrets Manager and the mail server without a NAT gateway. Its security group allows no inbound traffic; outbound is open. EFS accepts NFS (port 2049) only from the task's security group.
 
 ### Naming
 
@@ -271,13 +280,11 @@ Each Terraform module lives in its own repository and is pulled at a pinned tag:
 | ECS | `github.com/KateChukwusom/cob-terraform-aws-ecs` |
 | Scheduler | `github.com/KateChukwusom/cob-terraform-aws-scheduler` |
 
-The tag for each is set in the `source = "...?ref=<tag>"` line of `infra/<env>/main.tf`. The module repos must be **public**, or `terraform init` on the GitHub runner cannot download them.
-
 ### Environments
 
-`infra/dev` and `infra/prod` contain the same wiring with different settings. Each has its own `terraform.tfvars` and its own **remote state** in S3, so a change in one environment can never touch the other.
+`infra/dev` and `infra/prod` contain the same wiring with different settings. Each has its own `terraform.tfvars` and its own remote state in S3, so a change in one environment can never touch the other.
 
-Because they are separate, a new module version can be tried in dev (`ref=v1.0.1`) while prod stays on the tested version until you choose to promote it.
+Because they are separate, a new module version can be tried in dev (`ref=v1.0.1`) while prod stays on the tested version it is promoted.
 
 ### Per-environment settings (`terraform.tfvars`)
 
@@ -302,12 +309,12 @@ Because they are separate, a new module version can be tried in dev (`ref=v1.0.1
 | Tool / account | Notes |
 | --- | --- |
 | AWS account | You need permission to create IAM, S3, ECS, EFS, VPC and related resources |
-| GitHub account and repo | Public repo recommended (environment approval rules work on the free plan) |
-| Terraform `>= 1.10` | Needed for S3 native state locking (`use_lockfile`) |
-| AWS CLI v2 | Logged in to your account (`aws sts get-caller-identity` works) |
+| GitHub account and repo | Public repo recommended |
+| Terraform `>= 1.10` | Needed for S3 native state locking |
+| AWS CLI v2 | Logged in to your account |
 | Docker | Only for local testing |
 | Gmail account with 2-step verification | To create an app password |
-| A second GitHub user | Optional, to approve pull requests and prod deployments |
+| A second GitHub user | to approve pull requests and prod deployments |
 
 Throughout this guide, replace:
 
@@ -418,7 +425,7 @@ In the repository settings, create two environments, `dev` and `prod`:
 
 ---
 
-### 4. Configure GitHub
+### Configure GitHub
 
 In your repo's Settings:
 
@@ -436,9 +443,9 @@ In your repo's Settings:
 
 Edit `infra/dev/terraform.tfvars` (and `infra/prod/terraform.tfvars`, with `environment = "prod"`)
 
-## 8. First deploy
+## First deploy
 
-1. Create a branch, commit, push, and open a pull request (see [Day-to-day workflow](#day-to-day-workflow)).
+1. Create a branch, commit, push, and open a pull request.
 2. Wait for the `check` job to go green and have your reviewer approve.
 3. Merge. The pipeline deploys **dev**, then waits for approval, then deploys **prod**.
 
@@ -449,7 +456,7 @@ The first run creates everything from scratch, so it takes several minutes (the 
 One file, `.github/workflows/pipeline.yml`, with two jobs:
 
 | Job | Runs on | What it does |
-|---|---|---|
+| --- | --- | --- |
 | `check` (CI) | Pull requests | `terraform fmt -check`, `terraform init -backend=false` and `validate` for dev and prod, Docker build (no push). No AWS login. |
 | `deploy` (CD) | Merge to `main`, or manual run | For dev, then prod: log in to AWS via OIDC, create the ECR repo, build and push the image tagged with the short commit ID, `terraform plan`, `terraform apply`, then run the task once and fail if its exit code is not 0 |
 
@@ -458,20 +465,7 @@ Key design points:
 - **No stored AWS keys.** GitHub requests a short-lived token; AWS checks it against the role's trust policy.
 - **Immutable image tags.** Every image is tagged with the commit ID, and the push is skipped if that tag already exists.
 - **README-only changes do not trigger anything.** The workflow only runs for changes under `daily-quotes-app/`, `infra/` or the workflow file itself.
-- **One deploy at a time per environment**, using `concurrency` with `cancel-in-progress: false`, so a running `terraform apply` is never killed halfway.
-- **Two approval gates.** A reviewer must approve the pull request before merge, and the `prod` environment requires a reviewer to approve the deployment.
-- **Actions are pinned to major versions.** Check each action's releases page periodically, or enable Dependabot with `.github/dependabot.yml`:
-
-```yaml
-version: 2
-updates:
-  - package-ecosystem: "github-actions"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-```
-
-## Day-to-day workflow
+- **Two approval gates.** A reviewer must approve the pull request before merge, and the `prod` environment requires a reviewer to approve the deployment
 
 `main` is protected. Every change goes through a branch and a pull request.
 
@@ -482,7 +476,7 @@ git pull
 git checkout -b my-change
 
 # ...edit files...
-terraform fmt -recursive        # run inside infra/ if you changed Terraform
+terraform fmt -recursive        # run inside infra/
 
 git add -A
 git commit -m "Describe the change"
@@ -498,43 +492,17 @@ Then:
 
 Changing only the app (`daily-quotes-app/`) rebuilds the image and redeploys with the new tag. Changing infrastructure runs `terraform apply`.
 
-## Configuration reference
-
-| Environment variable | Where set | Used by |
-| --- | --- | --- |
-| `EMAIL_ADDRESS` | `app_environment` | Sender address and SMTP login |
-| `EMAIL_PASSWORD` | `app_secrets` (Secrets Manager) | SMTP password |
-| `ADMIN_EMAIL_ADDRESS` | `app_environment` | Recipient of the admin summary |
-| `DB_PATH` | `app_environment` | SQLite file location (`/data/storage.db` on EFS) |
-| `SMTP_SERVER`, `SMTP_PORT` | Optional | Default `smtp.gmail.com`, `465` |
-
-### Troubleshooting
-
-| Symptom | Cause and fix |
-| --- | --- |
-| `terraform fmt -check` fails in CI (exit code 3) | Run `terraform fmt -recursive` in `infra/` and commit |~
-| OIDC login refused | The trust policy `sub` does not match `repo:<user>/<repo>:environment:<env>` |
-| `already exists` on apply | A leftover resource from an earlier stack is not in the current state. Delete it, then re-run the failed job |
-| `Connection unexpectedly closed` from the email scripts | The secret is stored as JSON, or the password is wrong. Re-save it as a plain 16-character app password |
-| `Missing email configuration` | A required environment variable is missing (for example `ADMIN_EMAIL_ADDRESS`) |
-| `/data is not a mounted volume` | The EFS volume is not attached to the task, or you ran the container locally without `-v` |
-| Task exit code `None`, `Failed to resolve ...efs...` | The EFS mount target was not ready yet. Re-run the task; consider a short wait before the run-task step |
-| `CannotPullContainerError ... not found` | The image tag is not in ECR yet |
-| Run `terraform` locally gives `no such host` (WSL) | WSL DNS is broken. Set `nameserver 8.8.8.8` in `/etc/resolv.conf` |
-| `Failed to install provider ... symlink` | Remove the cached provider folder under `~/.terraform.d/plugin-cache` and re-run `init` |
-| Prod deployed without approval | The `prod` environment has no saved required reviewers, or admin bypass is on |
-
-Useful commands:
-
 ```bash
 
 ### Manually from your computer
 
 ```bash
-cd infra/dev            # or infra/prod
+cd infra/dev           
 terraform init
 terraform plan
 terraform apply
 ```
 
-This project is open to contribution.
+## Contributing
+
+Contributions are welcome, whether it is a bug fix, a documentation improvement or a new idea.
